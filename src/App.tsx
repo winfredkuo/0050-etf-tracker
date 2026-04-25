@@ -25,9 +25,11 @@ export default function App() {
   const [isFetching, setIsFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<Date | null>(null);
   
   // Use a ref to prevent syncing back to Supabase immediately after fetching from it
   const isInitialLoad = useRef(true);
+  const skipNextSync = useRef(false);
 
   const currentPrice = parseFloat(currentPriceStr) || 0;
 
@@ -51,7 +53,8 @@ export default function App() {
 
         if (data) {
           // Data exists in Supabase, update local state
-          if (data.investments) setInvestments(data.investments);
+          skipNextSync.current = true;
+          if (data.investments) setInvestments(data.investments || []);
           if (data.profiles) {
             // Renaming logic for existing profiles
             let cloudProfiles = data.profiles.map((p: any) => {
@@ -67,6 +70,7 @@ export default function App() {
             }
             setProfiles(cloudProfiles);
           }
+          setLastSynced(new Date());
         } else {
           // No data in Supabase yet, push current local data
           await supabase.from('family_data').insert({
@@ -90,9 +94,15 @@ export default function App() {
 
   // Sync to Supabase when local data changes
   useEffect(() => {
-    if (!roomId || !supabase || isInitialLoad.current || isSyncing) return;
+    if (!roomId || !supabase || isInitialLoad.current) return;
+    
+    if (skipNextSync.current) {
+      skipNextSync.current = false;
+      return;
+    }
 
     const syncData = async () => {
+      setIsSyncing(true);
       try {
         await supabase
           .from('family_data')
@@ -102,12 +112,15 @@ export default function App() {
             profiles,
             updated_at: new Date().toISOString()
           });
+        setLastSynced(new Date());
       } catch (err) {
         console.error('Error syncing to Supabase:', err);
+      } finally {
+        setIsSyncing(false);
       }
     };
 
-    const timeoutId = setTimeout(syncData, 1000); // Debounce sync
+    const timeoutId = setTimeout(syncData, 2000); // 2 second debounce for stability
     return () => clearTimeout(timeoutId);
   }, [investments, profiles, roomId]);
 
@@ -204,7 +217,10 @@ export default function App() {
 
   const handleLogout = () => {
     setRoomId('');
+    setInvestments([]);
+    setProfiles(DEFAULT_PROFILES);
     isInitialLoad.current = true;
+    setLastSynced(null);
   };
 
   if (!roomId) {
@@ -315,6 +331,26 @@ export default function App() {
           {activeTab === 'constituents' && (
             <Constituents stockData={stockData} />
           )}
+          
+          {/* Sync Status Floating Indicator */}
+          <div className="fixed bottom-6 right-6 flex items-center gap-2 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full shadow-lg border border-slate-200 text-[10px] font-medium z-50">
+            {isSyncing ? (
+              <>
+                <RefreshCw className="h-3 w-3 text-indigo-500 animate-spin" />
+                <span className="text-slate-500">同步至雲端中...</span>
+              </>
+            ) : lastSynced ? (
+              <>
+                <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                <span className="text-slate-400">已存至雲端 ({lastSynced.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})</span>
+              </>
+            ) : (
+              <>
+                <div className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                <span className="text-slate-400">尚未連線雲端</span>
+              </>
+            )}
+          </div>
         </div>
       </main>
     </div>
