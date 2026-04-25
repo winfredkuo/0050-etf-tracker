@@ -1,0 +1,5 @@
+{
+  "name": "0050 ETF Tracker",
+  "description": "A tracker for regular investments in the 0050 ETF for two daughters, including a view of the ETF's constituents.",
+  "requestFramePermissions": []
+}
