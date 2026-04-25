@@ -18,6 +18,7 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [amount, setAmount] = useState('');
   const [price, setPrice] = useState('');
+  const [sharesInput, setSharesInput] = useState('');
   const [profileId, setProfileId] = useState(profiles[0]?.id || '');
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -25,27 +26,63 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
     date: '',
     amount: '',
     price: '',
+    shares: '',
     profileId: ''
   });
 
+  // Calculate amount when price or shares change in creation form
+  const handlePriceChange = (val: string) => {
+    setPrice(val);
+    const p = parseFloat(val);
+    const s = parseFloat(sharesInput);
+    if (!isNaN(p) && !isNaN(s)) {
+      setAmount((p * s).toFixed(0));
+    }
+  };
+
+  const handleSharesChange = (val: string) => {
+    setSharesInput(val);
+    const p = parseFloat(price);
+    const s = parseFloat(val);
+    if (!isNaN(p) && !isNaN(s)) {
+      setAmount((p * s).toFixed(0));
+    }
+  };
+
+  // Calculate amount when price or shares change in edit form
+  const handleEditPriceChange = (val: string) => {
+    const p = parseFloat(val);
+    const s = parseFloat(editForm.shares);
+    const newAmount = (!isNaN(p) && !isNaN(s)) ? (p * s).toFixed(0) : editForm.amount;
+    setEditForm({ ...editForm, price: val, amount: newAmount });
+  };
+
+  const handleEditSharesChange = (val: string) => {
+    const p = parseFloat(editForm.price);
+    const s = parseFloat(val);
+    const newAmount = (!isNaN(p) && !isNaN(s)) ? (p * s).toFixed(0) : editForm.amount;
+    setEditForm({ ...editForm, shares: val, amount: newAmount });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || !price || !profileId) return;
+    if (!amount || !price || !sharesInput || !profileId) return;
 
     const numAmount = parseFloat(amount);
     const numPrice = parseFloat(price);
-    const shares = numAmount / numPrice;
+    const numShares = parseFloat(sharesInput);
 
     onAdd({
       date,
       amount: numAmount,
       price: numPrice,
-      shares,
+      shares: numShares,
       profileId
     });
 
     setAmount('');
     setPrice('');
+    setSharesInput('');
   };
 
   const startEdit = (inv: InvestmentRecord) => {
@@ -54,6 +91,7 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
       date: inv.date,
       amount: inv.amount.toString(),
       price: inv.price.toString(),
+      shares: inv.shares.toString(),
       profileId: inv.profileId
     });
   };
@@ -63,17 +101,17 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
   };
 
   const saveEdit = (id: string) => {
-    if (!editForm.amount || !editForm.price || !editForm.profileId) return;
+    if (!editForm.amount || !editForm.price || !editForm.shares || !editForm.profileId) return;
 
     const numAmount = parseFloat(editForm.amount);
     const numPrice = parseFloat(editForm.price);
-    const shares = numAmount / numPrice;
+    const numShares = parseFloat(editForm.shares);
 
     onEdit(id, {
       date: editForm.date,
       amount: numAmount,
       price: numPrice,
-      shares,
+      shares: numShares,
       profileId: editForm.profileId
     });
 
@@ -89,7 +127,7 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
           <CardTitle>新增定期定額紀錄</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-5 items-end">
+          <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-6 items-end">
             <div className="space-y-2">
               <label className="text-sm font-medium">成員</label>
               <select 
@@ -108,15 +146,19 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">投入金額 (NT$)</label>
-              <Input type="number" min="0" step="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="例如: 5000" required />
+              <label className="text-sm font-medium">買入價格 (NT$)</label>
+              <Input type="number" min="0" step="0.01" value={price} onChange={(e) => handlePriceChange(e.target.value)} placeholder="如: 150.5" required />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">買入價格 (NT$)</label>
-              <Input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="例如: 150.5" required />
+              <label className="text-sm font-medium">買入股數 (股)</label>
+              <Input type="number" min="0" step="1" value={sharesInput} onChange={(e) => handleSharesChange(e.target.value)} placeholder="如: 100" required />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">投入金額 (NT$)</label>
+              <Input type="number" min="0" step="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="自動計算" required />
             </div>
             <Button type="submit" className="w-full">
-              <Plus className="h-4 w-4 mr-2" /> 新增紀錄
+              <Plus className="h-4 w-4 mr-2" /> 新增
             </Button>
           </form>
         </CardContent>
@@ -136,9 +178,9 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
                   <tr>
                     <th className="px-4 py-3">日期</th>
                     <th className="px-4 py-3">帳戶</th>
-                    <th className="px-4 py-3 text-right">投入金額</th>
                     <th className="px-4 py-3 text-right">買入價格</th>
                     <th className="px-4 py-3 text-right">獲得股數</th>
+                    <th className="px-4 py-3 text-right">投入金額</th>
                     <th className="px-4 py-3 text-center">操作</th>
                   </tr>
                 </thead>
@@ -173,9 +215,9 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
                             <Input 
                               type="number" 
                               min="0" 
-                              step="1" 
-                              value={editForm.amount} 
-                              onChange={(e) => setEditForm({...editForm, amount: e.target.value})} 
+                              step="0.01" 
+                              value={editForm.price} 
+                              onChange={(e) => handleEditPriceChange(e.target.value)} 
                               className="h-8 text-xs text-right"
                             />
                           </td>
@@ -183,17 +225,21 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
                             <Input 
                               type="number" 
                               min="0" 
-                              step="0.01" 
-                              value={editForm.price} 
-                              onChange={(e) => setEditForm({...editForm, price: e.target.value})} 
+                              step="1" 
+                              value={editForm.shares} 
+                              onChange={(e) => handleEditSharesChange(e.target.value)} 
                               className="h-8 text-xs text-right"
                             />
                           </td>
-                          <td className="px-4 py-3 text-right text-slate-400">
-                            {/* Auto-calculated, no input */}
-                            {editForm.amount && editForm.price 
-                              ? (parseFloat(editForm.amount) / parseFloat(editForm.price)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })
-                              : '-'}
+                          <td className="px-4 py-3 text-right">
+                            <Input 
+                                type="number" 
+                                min="0" 
+                                step="1" 
+                                value={editForm.amount} 
+                                onChange={(e) => setEditForm({...editForm, amount: e.target.value})} 
+                                className="h-8 text-xs text-right"
+                              />
                           </td>
                           <td className="px-4 py-3 text-center">
                             <div className="flex items-center justify-center gap-1">
@@ -217,9 +263,9 @@ export function Records({ investments, profiles, onAdd, onEdit, onDelete }: Reco
                             {profile?.name}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right">NT$ {inv.amount.toLocaleString()}</td>
                         <td className="px-4 py-3 text-right">NT$ {inv.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="px-4 py-3 text-right">{inv.shares.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                        <td className="px-4 py-3 text-right font-medium">NT$ {inv.amount.toLocaleString()}</td>
                         <td className="px-4 py-3 text-center">
                           <div className="flex items-center justify-center gap-1">
                             <Button variant="ghost" size="icon" onClick={() => startEdit(inv)} className="h-8 w-8 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50">
