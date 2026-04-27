@@ -20,12 +20,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'records' | 'constituents'>('dashboard');
   const [investments, setInvestments] = useLocalStorage<InvestmentRecord[]>('0050-investments', []);
   const [profiles, setProfiles] = useLocalStorage<Profile[]>('0050-profiles', DEFAULT_PROFILES);
-  const [currentPriceStr, setCurrentPriceStr] = useLocalStorage<string>('0050-current-price', '150.00');
+  const [currentPriceStr, setCurrentPriceStr] = useLocalStorage<string>('0050-current-price', '93.00');
   const [stockData, setStockData] = useState<Record<string, any>>({});
   const [isFetching, setIsFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
+  const [isCloudOffline, setIsCloudOffline] = useState(false);
   
   // Use a ref to prevent syncing back to Supabase immediately after fetching from it
   const isInitialLoad = useRef(true);
@@ -39,6 +40,7 @@ export default function App() {
 
     const fetchSupabaseData = async () => {
       setIsSyncing(true);
+      setIsCloudOffline(false);
       try {
         const { data, error } = await supabase
           .from('family_data')
@@ -48,6 +50,7 @@ export default function App() {
 
         if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
           console.error('Error fetching from Supabase:', error);
+          setIsCloudOffline(true);
           return;
         }
 
@@ -71,17 +74,25 @@ export default function App() {
             setProfiles(cloudProfiles);
           }
           setLastSynced(new Date());
+          setIsCloudOffline(false);
         } else {
           // No data in Supabase yet, push current local data
-          await supabase.from('family_data').insert({
+          const { error: insertError } = await supabase.from('family_data').insert({
             room_id: roomId,
             investments,
             profiles,
             updated_at: new Date().toISOString()
           });
+          if (insertError) {
+            setIsCloudOffline(true);
+          } else {
+            setLastSynced(new Date());
+            setIsCloudOffline(false);
+          }
         }
       } catch (err) {
         console.error('Supabase sync error:', err);
+        setIsCloudOffline(true);
       } finally {
         setIsSyncing(false);
         // Allow subsequent changes to be synced to Supabase
@@ -104,7 +115,7 @@ export default function App() {
     const syncData = async () => {
       setIsSyncing(true);
       try {
-        await supabase
+        const { error } = await supabase
           .from('family_data')
           .upsert({
             room_id: roomId,
@@ -112,9 +123,17 @@ export default function App() {
             profiles,
             updated_at: new Date().toISOString()
           });
-        setLastSynced(new Date());
+        
+        if (error) {
+          console.error('Sync error:', error);
+          setIsCloudOffline(true);
+        } else {
+          setLastSynced(new Date());
+          setIsCloudOffline(false);
+        }
       } catch (err) {
         console.error('Error syncing to Supabase:', err);
+        setIsCloudOffline(true);
       } finally {
         setIsSyncing(false);
       }
@@ -153,22 +172,26 @@ export default function App() {
     try {
       const priceMap: Record<string, { price: string; change: string; percentChange?: number }> = {};
       
-      // 取得 TWSE (上市) 資料 - 透過我們自己的後端 API 避免 CORS 問題
+      // 取得 TWSE (上市) 資料作為單一事實來源
       const twseRes = await fetch('/api/twse');
       if (!twseRes.ok) {
-        throw new Error(`伺服器錯誤: ${twseRes.status}`);
+        throw new Error(`證交所伺服器錯誤: ${twseRes.status}`);
       }
       
       const twseData = await twseRes.json();
+      if (!Array.isArray(twseData)) {
+        throw new Error("擷取到的股價資料格式不正確");
+      }
+
       twseData.forEach((item: any) => {
         const price = parseFloat(item.ClosingPrice);
         const change = parseFloat(item.Change);
         let percentChange = 0;
         
         if (!isNaN(price) && !isNaN(change)) {
-          // 昨收價 = 今收價 - 漲跌價
+          // 昨收 = 今收 - 漲跌
           const prevPrice = price - change;
-          if (prevPrice !== 0) {
+          if (prevPrice > 0) {
             percentChange = (change / prevPrice) * 100;
           }
         }
@@ -181,17 +204,18 @@ export default function App() {
       });
 
       if (Object.keys(priceMap).length === 0) {
-        throw new Error("無法取得上市股價資料，請稍後再試");
+        throw new Error("無法取得股價資料，請稍後再試");
       }
 
       setStockData(priceMap);
 
+      // 設定 0050 的當前價格
       if (priceMap['0050'] && priceMap['0050'].price) {
         setCurrentPriceStr(priceMap['0050'].price.replace(/,/g, ''));
       }
     } catch (error: any) {
-      console.error("Failed to fetch stock prices", error);
-      setFetchError(error.message || "Failed to fetch");
+      console.error('Fetch error:', error);
+      setFetchError(error.message || "更新失敗");
     } finally {
       setIsFetching(false);
     }
@@ -295,19 +319,22 @@ export default function App() {
                 type="number" 
                 min="0" 
                 step="0.01" 
-                className="pl-10 bg-slate-900 border-slate-700 text-white focus-visible:ring-indigo-500 h-9"
+                className="pl-10 bg-slate-900 border-slate-700 text-white focus-visible:ring-indigo-500 h-9 font-mono"
                 value={currentPriceStr}
                 onChange={(e) => setCurrentPriceStr(e.target.value)}
               />
             </div>
             {fetchError ? (
-              <p className="text-xs text-red-400 leading-relaxed">
-                擷取股價失敗：{fetchError}。您可以手動輸入股價。
+              <p className="text-xs text-red-400 leading-relaxed bg-red-900/20 p-2 rounded border border-red-900/30">
+                自動更新失敗：{fetchError}。請點擊上方重新整理或手動輸入。
               </p>
             ) : (
-              <p className="text-xs text-slate-400 leading-relaxed">
-                開啟程式時已自動擷取最新報價，用於計算目前市值與未實現損益。
-              </p>
+              <div className="bg-slate-900/50 p-2 rounded border border-slate-700/50">
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  系統目前使用證交所 OpenData 擷取當日最新收盤價。
+                  若資料尚未更新或不準確，請直接在上方手動輸入即可。
+                </p>
+              </div>
             )}
           </div>
         </div>
@@ -329,27 +356,39 @@ export default function App() {
             />
           )}
           {activeTab === 'constituents' && (
-            <Constituents stockData={stockData} />
+            <Constituents />
           )}
           
           {/* Sync Status Floating Indicator */}
-          <div className="fixed bottom-6 right-6 flex items-center gap-2 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full shadow-lg border border-slate-200 text-[10px] font-medium z-50">
-            {isSyncing ? (
-              <>
-                <RefreshCw className="h-3 w-3 text-indigo-500 animate-spin" />
-                <span className="text-slate-500">同步至雲端中...</span>
-              </>
-            ) : lastSynced ? (
-              <>
-                <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                <span className="text-slate-400">已存至雲端 ({lastSynced.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})</span>
-              </>
-            ) : (
-              <>
-                <div className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                <span className="text-slate-400">尚未連線雲端</span>
-              </>
+          <div className="fixed bottom-6 right-6 flex flex-col items-end gap-2 z-50">
+            {isCloudOffline && (
+              <div className="bg-red-50 text-red-600 px-3 py-1.5 rounded-lg shadow-sm border border-red-100 text-[10px] font-medium animate-pulse mb-1">
+                雲端連線失敗，目前為離線模式
+              </div>
             )}
+            <div className="flex items-center gap-2 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full shadow-lg border border-slate-200 text-[10px] font-medium">
+              {isSyncing ? (
+                <>
+                  <RefreshCw className="h-3 w-3 text-indigo-500 animate-spin" />
+                  <span className="text-slate-500">同步至雲端中...</span>
+                </>
+              ) : lastSynced ? (
+                <>
+                  <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                  <span className="text-slate-400">已存至雲端 ({lastSynced.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})</span>
+                </>
+              ) : isCloudOffline ? (
+                <>
+                  <div className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                  <span className="text-slate-400">雲端連線異常</span>
+                </>
+              ) : (
+                <>
+                  <div className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  <span className="text-slate-400">尚未連線雲端</span>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </main>
